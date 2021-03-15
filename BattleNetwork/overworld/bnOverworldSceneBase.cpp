@@ -19,6 +19,7 @@
 #include "../bnConfigScene.h"
 #include "../bnFolderScene.h"
 #include "../bnCardFolderCollection.h"
+#include "../bnCustomBackground.h"
 #include "../bnLanBackground.h"
 #include "../bnACDCBackground.h"
 #include "../bnGraveyardBackground.h"
@@ -73,7 +74,7 @@ Overworld::SceneBase::SceneBase(swoosh::ActivityController& controller, bool gue
   webAccountAnimator.SetAnimation("NO_CONNECTION");
 
   // Draws the scrolling background
-  SetBackground(new LanBackground);
+  SetBackground(std::make_shared<LanBackground>());
 
   personalMenu.setScale(2.f, 2.f);
   emote.setScale(2.f, 2.f);
@@ -569,48 +570,51 @@ void Overworld::SceneBase::NaviEquipSelectedFolder()
   }
 }
 
-void Overworld::SceneBase::LoadBackground(const std::string& value)
+void Overworld::SceneBase::LoadBackground(const Map& map, const std::string& value)
 {
-  std::string str = value;
-  std::transform(str.begin(), str.end(), str.begin(), [](auto in) {
-    return std::tolower(in);
-  });
+  if (value == "custom") {
+    const auto& texture = GetTexture(map.GetBackgroundCustomTexturePath());
+    const auto& animationData = GetText(map.GetBackgroundCustomAnimationPath());
+    const auto& velocity = map.GetBackgroundCustomVelocity();
 
-  if (str == "undernet") {
-    SetBackground(new UndernetBackground);
+    Animation animation;
+    animation.LoadWithData(animationData);
+
+    SetBackground(std::make_shared<CustomBackground>(texture, animation, velocity));
   }
-  else if (str == "robot") {
-    SetBackground(new RobotBackground);
+  else if (value == "undernet") {
+    SetBackground(std::make_shared<UndernetBackground>());
   }
-  else if (str == "misc") {
-    SetBackground(new MiscBackground);
+  else if (value == "robot") {
+    SetBackground(std::make_shared<RobotBackground>());
   }
-  else if (str == "grave") {
-    SetBackground(new GraveyardBackground);
+  else if (value == "misc") {
+    SetBackground(std::make_shared<MiscBackground>());
   }
-  else if (str == "weather") {
-    SetBackground(new WeatherBackground);
+  else if (value == "grave") {
+    SetBackground(std::make_shared<GraveyardBackground>());
   }
-  else if (str == "medical") {
-    SetBackground(new MedicalBackground);
+  else if (value == "weather") {
+    SetBackground(std::make_shared<WeatherBackground>());
   }
-  else if (str == "acdc") {
-    SetBackground(new ACDCBackground);
+  else if (value == "medical") {
+    SetBackground(std::make_shared<MedicalBackground>());
   }
-  else if (str == "virus") {
-    SetBackground(new VirusBackground);
+  else if (value == "acdc") {
+    SetBackground(std::make_shared<ACDCBackground>());
   }
-  else if (str == "judge") {
-    SetBackground(new JudgeTreeBackground);
+  else if (value == "virus") {
+    SetBackground(std::make_shared<VirusBackground>());
   }
-  else if (str == "secret") {
-    SetBackground(new SecretBackground);
+  else if (value == "judge") {
+    SetBackground(std::make_shared<JudgeTreeBackground>());
+  }
+  else if (value == "secret") {
+    SetBackground(std::make_shared<SecretBackground>());
   }
   else {
-    SetBackground(new LanBackground);
+    SetBackground(std::make_shared<LanBackground>());
   }
-
-  // TODO: else if (isPNG(value)) { WriteToDisc(".areaname.png.value"); /* should cache too */ }
 }
 
 std::string Overworld::SceneBase::GetText(const std::string& path) {
@@ -672,7 +676,29 @@ void Overworld::SceneBase::LoadMap(const std::string& data)
     auto propertyValue = propertyElement.GetAttribute("value");
 
     if (propertyName == "Background") {
+      std::transform(propertyValue.begin(), propertyValue.end(), propertyValue.begin(), [](auto in) {
+        return std::tolower(in);
+      });
+
       map.SetBackgroundName(propertyValue);
+    }
+    else if (propertyName == "Background Texture") {
+      map.SetBackgroundCustomTexturePath(propertyValue);
+    }
+    else if (propertyName == "Background Animation") {
+      map.SetBackgroundCustomAnimationPath(propertyValue);
+    }
+    else if (propertyName == "Background Vel X") {
+      auto velocity = map.GetBackgroundCustomVelocity();
+      velocity.x = propertyElement.GetAttributeFloat("value");
+
+      map.SetBackgroundCustomVelocity(velocity);
+    }
+    else if (propertyName == "Background Vel Y") {
+      auto velocity = map.GetBackgroundCustomVelocity();
+      velocity.y = propertyElement.GetAttributeFloat("value");
+
+      map.SetBackgroundCustomVelocity(velocity);
     }
     else if (propertyName == "Name") {
       map.SetName(propertyValue);
@@ -802,9 +828,16 @@ void Overworld::SceneBase::LoadMap(const std::string& data)
     }
   }
 
+  bool backgroundDiffers = map.GetBackgroundName() != this->map.GetBackgroundName() || (
+    map.GetBackgroundName() == "custom" && (
+      map.GetBackgroundCustomTexturePath() != this->map.GetBackgroundCustomTexturePath() ||
+      map.GetBackgroundCustomAnimationPath() != this->map.GetBackgroundCustomAnimationPath() ||
+      map.GetBackgroundCustomVelocity() != this->map.GetBackgroundCustomVelocity()
+      )
+    );
 
-  if (map.GetBackgroundName() != this->map.GetBackgroundName()) {
-    LoadBackground(map.GetBackgroundName());
+  if (backgroundDiffers) {
+    LoadBackground(map, map.GetBackgroundName());
   }
 
   if (map.GetSongPath() != this->map.GetSongPath()) {
@@ -1026,13 +1059,8 @@ const bool Overworld::SceneBase::HasTeleportedAway() const
   return teleportedOut;
 }
 
-void Overworld::SceneBase::SetBackground(Background* background)
+void Overworld::SceneBase::SetBackground(const std::shared_ptr<Background>& background)
 {
-  if (this->bg) {
-    delete this->bg;
-    this->bg = nullptr;
-  }
-
   this->bg = background;
 }
 
@@ -1160,7 +1188,7 @@ void Overworld::SceneBase::GotoMobSelect()
   CardFolder* folder = nullptr;
 
   if (folders.GetFolder(0, folder)) {
-    SelectMobScene::Properties props{ currentNavi, *folder, programAdvance, GetBackground()->Clone() };
+    SelectMobScene::Properties props{ currentNavi, *folder, programAdvance, bg };
     using effect = segue<PixelateBlackWashFade, milliseconds<500>>;
     Audio().Play(AudioType::CHIP_DESC);
     getController().push<effect::to<SelectMobScene>>(props);
@@ -1229,7 +1257,7 @@ SelectedNavi& Overworld::SceneBase::GetCurrentNavi()
   return currentNavi;
 }
 
-Background* Overworld::SceneBase::GetBackground()
+std::shared_ptr<Background> Overworld::SceneBase::GetBackground()
 {
   return this->bg;
 }
